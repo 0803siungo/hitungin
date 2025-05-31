@@ -26,7 +26,7 @@ class CreatePurchase extends CreateRecord
                 'source_type' => 'purchase',
                 'source_id' => $purchase->id,
                 'qty' => $item->qty,
-                'note' => 'Pembelian dari Supplier: ' . ($purchase->supplier->name ?? ''),
+                'note' => ($purchase->supplier->name ?? ''),
                 'meta' => [
                     'invoice' => $purchase->invoice_number ?? null,
                     'supplier' => $purchase->supplier->name ?? null,

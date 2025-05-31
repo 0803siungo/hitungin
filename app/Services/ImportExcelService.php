@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\Returns; // pakai nama model sesuai table returns kamu
 use App\Models\StockMovement;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -11,11 +12,10 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class ImportExcelService
 {
-    // Import sales/return
-    public function importSalesOrReturn(
+    // Import sales (penjualan)
+    public function importSales(
         string $file,
         string $marketplace,
-        string $type = 'sales',
         ?string $importedBy = null
     ): array {
         $data = Excel::toArray([], $file);
@@ -24,12 +24,9 @@ class ImportExcelService
             return ['success' => 0, 'failed' => 0, 'errors' => ['File kosong atau format tidak sesuai']];
         }
         $header = array_map('trim', $rows[0]);
-        // Mapping kolom
+
         $indexSku = array_search('Nomor Referensi SKU', $header);
-        // $indexQty = $type === 'return'
-        //     ? array_search('Returned quantity', $header)
-        //     : array_search('Jumlah', $header);
-        $indexQty = array_search('Jumlah', $header);
+        $indexQtySales = array_search('Jumlah', $header);
         $indexPrice = array_search('Harga Setelah Diskon', $header);
         $indexOrderNum = array_search('No. Pesanan', $header);
         $indexSoldAt = array_search('Waktu Pesanan Dibuat', $header);
@@ -43,16 +40,16 @@ class ImportExcelService
         try {
             foreach (array_slice($rows, 1) as $row) {
                 $sku = $row[$indexSku] ?? null;
-                $qty = (int) ($row[$indexQty] ?? 0);
-                if ($type === 'return' && $qty < 1)
-                    continue; // return tanpa qty
+                $qty = (int) ($row[$indexQtySales] ?? 0);
+                if ($qty < 1)
+                    continue;
 
                 $price = (float) ($row[$indexPrice] ? str_replace('.', '', $row[$indexPrice]) : 0);
                 $orderNumber = $row[$indexOrderNum] ?? null;
                 $soldAt = $row[$indexSoldAt] ?? now();
                 $buyer = $row[$indexBuyer] ?? null;
 
-                if (!$sku || !$qty)
+                if (!$sku)
                     continue;
 
                 $product = Product::where('sku', $sku)->lockForUpdate()->first();
@@ -73,24 +70,21 @@ class ImportExcelService
                     'buyer_username' => $buyer,
                     'sold_at' => $soldAt,
                     'raw_data' => json_encode($row),
-                    'type' => $type, // pastikan sudah ada kolom type di sales
+                    'type' => 'sales', // pastikan sudah ada kolom type di sales
                 ]);
 
-                // Update stok (pengurangan utk sales, penambahan utk return)
-                $typeStockMove = $type === 'return' ? 'in' : 'out';
-                $qtyStockMove = $type === 'return' ? $qty : -$qty;
-                $typeProductUpdate = $type === 'return' ? 'increment' : 'decrement';
-                $product->{$typeProductUpdate}('stock', $qty);
+                // Update stok (pengurangan utk sales)
+                $product->decrement('stock', $qty);
 
                 // Insert ke stock_movements
                 StockMovement::create([
                     'product_id' => $product->id,
                     'sku' => $sku,
-                    'type' => $typeStockMove,
-                    'source_type' => $type,
+                    'type' => 'out',
+                    'source_type' => 'sales',
                     'source_id' => $sale->id,
-                    'qty' => $qtyStockMove,
-                    'note' => ($type === 'return' ? 'Retur' : 'Penjualan') . " marketplace: $marketplace #$orderNumber",
+                    'qty' => -$qty,
+                    'note' => $marketplace . '#' . $orderNumber,
                     'meta' => [
                         'buyer' => $buyer,
                         'price' => $price,
@@ -109,7 +103,103 @@ class ImportExcelService
         return ['success' => $success, 'failed' => $failed, 'errors' => $errors];
     }
 
-    // Import product master (SKU, nama, stock, dst)
+    // Import return ke table returns
+    public function importReturns(
+        string $file,
+        string $marketplace,
+        ?string $importedBy = null
+    ): array {
+        $data = Excel::toArray([], $file);
+        $rows = $data[0] ?? [];
+        if (count($rows) < 2) {
+            return ['success' => 0, 'failed' => 0, 'errors' => ['File kosong atau format tidak sesuai']];
+        }
+        $header = array_map('trim', $rows[0]);
+
+        $indexSku = array_search('Nomor Referensi SKU', $header);
+        $indexQtyReturn = array_search('Jumlah', $header);
+        $indexPrice = array_search('Harga Setelah Diskon', $header);
+        $indexOrderNum = array_search('No. Pesanan', $header);
+        $indexSoldAt = array_search('Waktu Pesanan Dibuat', $header);
+        $indexBuyer = array_search('Username (Pembeli)', $header);
+
+        $success = 0;
+        $failed = 0;
+        $errors = [];
+
+        DB::beginTransaction();
+        try {
+            foreach (array_slice($rows, 1) as $row) {
+                $sku = $row[$indexSku] ?? null;
+                $qty = (int) ($row[$indexQtyReturn] ?? 0);
+                if ($qty < 1)
+                    continue;
+
+                $price = (float) ($row[$indexPrice] ? str_replace('.', '', $row[$indexPrice]) : 0);
+                $orderNumber = $row[$indexOrderNum] ?? null;
+                $soldAt = $row[$indexSoldAt] ?? now();
+                $buyer = $row[$indexBuyer] ?? null;
+
+                if (!$sku)
+                    continue;
+
+                $product = Product::where('sku', $sku)->lockForUpdate()->first();
+                if (!$product) {
+                    $failed++;
+                    $errors[] = "SKU tidak ditemukan: {$sku}";
+                    continue;
+                }
+
+                $sale = Sale::where('order_number', $orderNumber)->first();
+
+                // Insert ke returns (gunakan model sesuai dengan nama model returns kamu)
+                $return = Returns::create([
+                    'sale_id' => $sale?->id,
+                    'product_id' => $product->id,
+                    'sku' => $sku,
+                    'qty' => $qty,
+                    'price' => $price,
+                    'marketplace' => $marketplace,
+                    'order_number' => $orderNumber,
+                    'buyer_username' => $buyer,
+                    'returned_at' => $soldAt,
+                    'status' => 'completed',
+                    'reason' => null,
+                    'note' => null,
+                    'raw_data' => json_encode($row),
+                ]);
+
+                // Update stok (masuk)
+                $product->increment('stock', $qty);
+
+                // Insert ke stock_movements (stok masuk)
+                StockMovement::create([
+                    'product_id' => $product->id,
+                    'sku' => $sku,
+                    'type' => 'in',
+                    'source_type' => 'return',
+                    'source_id' => $return->id,
+                    'qty' => $qty,
+                    'note' => $marketplace . ' #' . $orderNumber,
+                    'meta' => [
+                        'buyer' => $buyer,
+                        'price' => $price,
+                        'imported_by' => $importedBy ?? (Auth::user()->name ?? null),
+                    ],
+                    'moved_at' => $soldAt ?? now(),
+                ]);
+                $success++;
+            }
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return ['success' => $success, 'failed' => $failed, 'errors' => [$e->getMessage()]];
+        }
+
+        return ['success' => $success, 'failed' => $failed, 'errors' => $errors];
+    }
+
+    // Import product master (SKU, nama, stock, dst) tetap sama
     public function importProducts(
         string $file,
         ?string $importedBy = null
@@ -148,15 +238,13 @@ class ImportExcelService
                     // Buat baru jika SKU belum ada
                     $product = Product::create([
                         'sku' => $sku,
-                        'name' => $name ?: 'Unknown', // Default "Unknown" jika nama kosong
+                        'name' => $name ?: 'Unknown',
                         'stock' => $stock,
                     ]);
                     $isNew = true;
                     $oldStock = 0;
                 } else {
-                    // Jika produk sudah ada, hanya update stock
                     $updateData = ['stock' => $stock];
-                    // Jika nama tidak kosong, baru update
                     if ($name !== '') {
                         $updateData['name'] = $name;
                     }
@@ -165,16 +253,14 @@ class ImportExcelService
                     $isNew = false;
                 }
 
-                // Hitung selisih (untuk keperluan stock movement)
                 $diffStock = $stock - $oldStock;
 
-                // Insert ke stock_movements jika stock berubah
                 if ($diffStock !== 0) {
                     StockMovement::create([
                         'product_id' => $product->id,
                         'sku' => $sku,
                         'type' => $diffStock > 0 ? 'in' : 'out',
-                        'source_type' => 'adjust', // adjustment stock manual
+                        'source_type' => 'adjust',
                         'source_id' => null,
                         'qty' => $diffStock,
                         'note' => $isNew ? 'Stock awal (import produk)' : 'Penyesuaian stock upload Excel',
@@ -198,5 +284,4 @@ class ImportExcelService
 
         return ['success' => $success, 'failed' => $failed, 'errors' => $errors];
     }
-
 }

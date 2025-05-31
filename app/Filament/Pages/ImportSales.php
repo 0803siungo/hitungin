@@ -78,11 +78,16 @@ class ImportSales extends Page
                     $file->getRealPath(),
                     auth()->user()->name ?? null,
                 );
-            } else {
-                $result = $importer->importSalesOrReturn(
+            } elseif ($type == "return") {
+                $result = $importer->importReturns(
                     $file->getRealPath(),
                     $this->data['marketplace'],
-                    $type,
+                    auth()->user()->name ?? null,
+                );
+            } else {
+                $result = $importer->importSales(
+                    $file->getRealPath(),
+                    $this->data['marketplace'],
                     auth()->user()->name ?? null,
                 );
             }
