@@ -16,7 +16,8 @@ return new class extends Migration {
             $table->string('name');
             $table->boolean('is_bundle')->default(false);
             $table->integer('stock')->nullable();
-            $table->decimal('price', 12, 2);
+            $table->decimal('price', 12, 2)->nullable();
+            $table->decimal('estimated_buy_price', 12, 2)->nullable();
             $table->text('description')->nullable();
             $table->timestamps();
         });
