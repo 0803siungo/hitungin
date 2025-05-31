@@ -93,6 +93,7 @@ class ProductResource extends Resource
         return [
                 // ProductResource\RelationManagers\BundleComponentsRelationManager::class,
             ProductResource\RelationManagers\BundleDetailRelationManager::class,
+            ProductResource\RelationManagers\StockMovementsRelationManager::class,
         ];
     }
 
