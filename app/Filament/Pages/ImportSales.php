@@ -67,14 +67,25 @@ class ImportSales extends Page
             'data.file' => 'required',
         ]);
         // Proses import data dari file excel
+
+        $type = $this->data['type'];
+        $importer = new ImportExcelService();
+
         foreach ($this->data['file'] as $file) {
-            $importer = new ImportExcelService();
-            $result = $importer->importSalesOrReturn(
-                $file,
-                $this->data['marketplace'],
-                $this->data['type'],
-                auth()->user()->name ?? null,
-            );
+            // dd($file->getRealPath());
+            if ($type == "sku") {
+                $result = $importer->importProducts(
+                    $file->getRealPath(),
+                    auth()->user()->name ?? null,
+                );
+            } else {
+                $result = $importer->importSalesOrReturn(
+                    $file->getRealPath(),
+                    $this->data['marketplace'],
+                    $type,
+                    auth()->user()->name ?? null,
+                );
+            }
             break;
         }
 

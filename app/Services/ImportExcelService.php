@@ -26,9 +26,10 @@ class ImportExcelService
         $header = array_map('trim', $rows[0]);
         // Mapping kolom
         $indexSku = array_search('Nomor Referensi SKU', $header);
-        $indexQty = $type === 'return'
-            ? array_search('Returned quantity', $header)
-            : array_search('Jumlah', $header);
+        // $indexQty = $type === 'return'
+        //     ? array_search('Returned quantity', $header)
+        //     : array_search('Jumlah', $header);
+        $indexQty = array_search('Jumlah', $header);
         $indexPrice = array_search('Harga Setelah Diskon', $header);
         $indexOrderNum = array_search('No. Pesanan', $header);
         $indexSoldAt = array_search('Waktu Pesanan Dibuat', $header);
@@ -119,9 +120,8 @@ class ImportExcelService
             return ['success' => 0, 'failed' => 0, 'errors' => ['File kosong atau format tidak sesuai']];
         }
         $header = array_map('trim', $rows[0]);
-        // Mapping kolom - ganti sesuai dengan kolom di file master produk
         $indexSku = array_search('SKU', $header);
-        $indexName = array_search('Nama Produk', $header);
+        $indexName = array_search('Nama', $header);
         $indexStock = array_search('Stock', $header);
 
         $success = 0;
@@ -132,23 +132,62 @@ class ImportExcelService
         try {
             foreach (array_slice($rows, 1) as $row) {
                 $sku = $row[$indexSku] ?? null;
-                $name = $row[$indexName] ?? null;
+                $name = trim($row[$indexName] ?? '');
                 $stock = (int) ($row[$indexStock] ?? 0);
 
-                if (!$sku || !$name) {
+                if (!$sku) {
                     $failed++;
-                    $errors[] = "SKU/Nama tidak boleh kosong";
+                    $errors[] = "SKU tidak boleh kosong";
                     continue;
                 }
 
-                $product = Product::updateOrCreate(
-                    ['sku' => $sku],
-                    [
-                        'name' => $name,
+                // Cari produk
+                $product = Product::where('sku', $sku)->lockForUpdate()->first();
+
+                if (!$product) {
+                    // Buat baru jika SKU belum ada
+                    $product = Product::create([
+                        'sku' => $sku,
+                        'name' => $name ?: 'Unknown', // Default "Unknown" jika nama kosong
                         'stock' => $stock,
-                        // Tambah field lain jika ada
-                    ]
-                );
+                    ]);
+                    $isNew = true;
+                    $oldStock = 0;
+                } else {
+                    // Jika produk sudah ada, hanya update stock
+                    $updateData = ['stock' => $stock];
+                    // Jika nama tidak kosong, baru update
+                    if ($name !== '') {
+                        $updateData['name'] = $name;
+                    }
+                    $oldStock = $product->stock;
+                    $product->update($updateData);
+                    $isNew = false;
+                }
+
+                // Hitung selisih (untuk keperluan stock movement)
+                $diffStock = $stock - $oldStock;
+
+                // Insert ke stock_movements jika stock berubah
+                if ($diffStock !== 0) {
+                    StockMovement::create([
+                        'product_id' => $product->id,
+                        'sku' => $sku,
+                        'type' => $diffStock > 0 ? 'in' : 'out',
+                        'source_type' => 'adjust', // adjustment stock manual
+                        'source_id' => null,
+                        'qty' => $diffStock,
+                        'note' => $isNew ? 'Stock awal (import produk)' : 'Penyesuaian stock upload Excel',
+                        'meta' => [
+                            'imported_by' => $importedBy ?? (Auth::user()->name ?? null),
+                            'from_import_excel' => true,
+                            'prev_stock' => $oldStock,
+                            'new_stock' => $stock,
+                        ],
+                        'moved_at' => now(),
+                    ]);
+                }
+
                 $success++;
             }
             DB::commit();
@@ -159,4 +198,5 @@ class ImportExcelService
 
         return ['success' => $success, 'failed' => $failed, 'errors' => $errors];
     }
+
 }
