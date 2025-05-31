@@ -34,6 +34,11 @@ class Product extends Model
         return $this->hasMany(ProductBundleDetail::class, 'component_product_id');
     }
 
+    public function sales()
+    {
+        return $this->hasMany(Sale::class);
+    }
+
     public function stockMovements()
     {
         return $this->hasMany(StockMovement::class);

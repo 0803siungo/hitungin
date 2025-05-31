@@ -36,8 +36,7 @@ class ProductResource extends Resource
                     ->numeric()
                     ->visible(fn($get) => !$get('is_bundle')),
                 Forms\Components\TextInput::make('price')
-                    ->numeric()
-                    ->required(),
+                    ->numeric(),
                 Forms\Components\Textarea::make('description')
                     ->rows(3),
             ]);
