@@ -25,4 +25,9 @@ class Purchase extends Model
     {
         return $this->hasMany(PurchaseItem::class);
     }
+
+    public function stockMovements()
+    {
+        return $this->hasMany(StockMovement::class, 'source_id')->where('source_type', 'sales');
+    }
 }

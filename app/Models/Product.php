@@ -34,6 +34,11 @@ class Product extends Model
         return $this->hasMany(ProductBundleDetail::class, 'component_product_id');
     }
 
+    public function stockMovements()
+    {
+        return $this->hasMany(StockMovement::class);
+    }
+
     public function getCalculatedEstimatedBuyPriceAttribute(): ?float
     {
         if (!$this->is_bundle) {

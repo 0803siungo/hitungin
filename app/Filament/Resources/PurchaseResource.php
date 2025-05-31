@@ -26,6 +26,7 @@ class PurchaseResource extends Resource
                 Forms\Components\Select::make('supplier_id')
                     ->relationship('supplier', 'name')
                     ->searchable()
+                    ->preload()
                     ->required(),
                 Forms\Components\TextInput::make('invoice_number')
                     ->maxLength(191),
@@ -40,6 +41,7 @@ class PurchaseResource extends Resource
                         Forms\Components\Select::make('product_id')
                             ->relationship('product', 'name')
                             ->searchable()
+                            ->preload()
                             ->required()
                             ->label('Product'),
                         Forms\Components\TextInput::make('qty')

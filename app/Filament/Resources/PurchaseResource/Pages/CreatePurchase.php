@@ -6,6 +6,7 @@ use App\Filament\Resources\PurchaseResource;
 use Filament\Actions;
 use Filament\Resources\Pages\CreateRecord;
 use App\Models\Product;
+use App\Models\StockMovement;
 
 class CreatePurchase extends CreateRecord
 {
@@ -17,6 +18,21 @@ class CreatePurchase extends CreateRecord
 
         foreach ($purchase->items as $item) {
             $product = Product::find($item->product_id);
+
+            // Asumsi setiap Purchase punya relasi items: product_id, sku, qty
+            StockMovement::create([
+                'product_id' => $item->product_id,
+                'type' => 'in',
+                'source_type' => 'purchase',
+                'source_id' => $purchase->id,
+                'qty' => $item->qty,
+                'note' => 'Pembelian dari Supplier: ' . ($purchase->supplier->name ?? ''),
+                'meta' => [
+                    'invoice' => $purchase->invoice_number ?? null,
+                    'supplier' => $purchase->supplier->name ?? null,
+                ],
+                'moved_at' => $purchase->purchased_date ?? now(),
+            ]);
 
             if ($product) {
                 // Update stock
