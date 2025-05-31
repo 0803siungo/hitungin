@@ -1,0 +1,162 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Product;
+use App\Models\Sale;
+use App\Models\StockMovement;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Maatwebsite\Excel\Facades\Excel;
+
+class ImportExcelService
+{
+    // Import sales/return
+    public function importSalesOrReturn(
+        string $file,
+        string $marketplace,
+        string $type = 'sales',
+        ?string $importedBy = null
+    ): array {
+        $data = Excel::toArray([], $file);
+        $rows = $data[0] ?? [];
+        if (count($rows) < 2) {
+            return ['success' => 0, 'failed' => 0, 'errors' => ['File kosong atau format tidak sesuai']];
+        }
+        $header = array_map('trim', $rows[0]);
+        // Mapping kolom
+        $indexSku = array_search('Nomor Referensi SKU', $header);
+        $indexQty = $type === 'return'
+            ? array_search('Returned quantity', $header)
+            : array_search('Jumlah', $header);
+        $indexPrice = array_search('Harga Setelah Diskon', $header);
+        $indexOrderNum = array_search('No. Pesanan', $header);
+        $indexSoldAt = array_search('Waktu Pesanan Dibuat', $header);
+        $indexBuyer = array_search('Username (Pembeli)', $header);
+
+        $success = 0;
+        $failed = 0;
+        $errors = [];
+
+        DB::beginTransaction();
+        try {
+            foreach (array_slice($rows, 1) as $row) {
+                $sku = $row[$indexSku] ?? null;
+                $qty = (int) ($row[$indexQty] ?? 0);
+                if ($type === 'return' && $qty < 1)
+                    continue; // return tanpa qty
+
+                $price = (float) ($row[$indexPrice] ? str_replace('.', '', $row[$indexPrice]) : 0);
+                $orderNumber = $row[$indexOrderNum] ?? null;
+                $soldAt = $row[$indexSoldAt] ?? now();
+                $buyer = $row[$indexBuyer] ?? null;
+
+                if (!$sku || !$qty)
+                    continue;
+
+                $product = Product::where('sku', $sku)->lockForUpdate()->first();
+                if (!$product) {
+                    $failed++;
+                    $errors[] = "SKU tidak ditemukan: {$sku}";
+                    continue;
+                }
+
+                // Insert ke sales
+                $sale = Sale::create([
+                    'product_id' => $product->id,
+                    'sku' => $sku,
+                    'marketplace' => $marketplace,
+                    'order_number' => $orderNumber,
+                    'qty' => $qty,
+                    'price' => $price,
+                    'buyer_username' => $buyer,
+                    'sold_at' => $soldAt,
+                    'raw_data' => json_encode($row),
+                    'type' => $type, // pastikan sudah ada kolom type di sales
+                ]);
+
+                // Update stok (pengurangan utk sales, penambahan utk return)
+                $typeStockMove = $type === 'return' ? 'in' : 'out';
+                $qtyStockMove = $type === 'return' ? $qty : -$qty;
+                $typeProductUpdate = $type === 'return' ? 'increment' : 'decrement';
+                $product->{$typeProductUpdate}('stock', $qty);
+
+                // Insert ke stock_movements
+                StockMovement::create([
+                    'product_id' => $product->id,
+                    'sku' => $sku,
+                    'type' => $typeStockMove,
+                    'source_type' => $type,
+                    'source_id' => $sale->id,
+                    'qty' => $qtyStockMove,
+                    'note' => ($type === 'return' ? 'Retur' : 'Penjualan') . " marketplace: $marketplace #$orderNumber",
+                    'meta' => [
+                        'buyer' => $buyer,
+                        'price' => $price,
+                        'imported_by' => $importedBy ?? (Auth::user()->name ?? null),
+                    ],
+                    'moved_at' => $soldAt ?? now(),
+                ]);
+                $success++;
+            }
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return ['success' => $success, 'failed' => $failed, 'errors' => [$e->getMessage()]];
+        }
+
+        return ['success' => $success, 'failed' => $failed, 'errors' => $errors];
+    }
+
+    // Import product master (SKU, nama, stock, dst)
+    public function importProducts(
+        string $file,
+        ?string $importedBy = null
+    ): array {
+        $data = Excel::toArray([], $file);
+        $rows = $data[0] ?? [];
+        if (count($rows) < 2) {
+            return ['success' => 0, 'failed' => 0, 'errors' => ['File kosong atau format tidak sesuai']];
+        }
+        $header = array_map('trim', $rows[0]);
+        // Mapping kolom - ganti sesuai dengan kolom di file master produk
+        $indexSku = array_search('SKU', $header);
+        $indexName = array_search('Nama Produk', $header);
+        $indexStock = array_search('Stock', $header);
+
+        $success = 0;
+        $failed = 0;
+        $errors = [];
+
+        DB::beginTransaction();
+        try {
+            foreach (array_slice($rows, 1) as $row) {
+                $sku = $row[$indexSku] ?? null;
+                $name = $row[$indexName] ?? null;
+                $stock = (int) ($row[$indexStock] ?? 0);
+
+                if (!$sku || !$name) {
+                    $failed++;
+                    $errors[] = "SKU/Nama tidak boleh kosong";
+                    continue;
+                }
+
+                $product = Product::updateOrCreate(
+                    ['sku' => $sku],
+                    [
+                        'name' => $name,
+                        'stock' => $stock,
+                        // Tambah field lain jika ada
+                    ]
+                );
+                $success++;
+            }
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return ['success' => $success, 'failed' => $failed, 'errors' => [$e->getMessage()]];
+        }
+
+        return ['success' => $success, 'failed' => $failed, 'errors' => $errors];
+    }
+}

@@ -2,16 +2,12 @@
 
 namespace App\Filament\Pages;
 
-use App\Models\StockMovement;
 use Filament\Pages\Page;
 use Filament\Forms;
 use Filament\Notifications\Notification;
-use Illuminate\Support\Facades\DB;
-use Maatwebsite\Excel\Facades\Excel;
 use Livewire\WithFileUploads;
 use App\Filament\Resources\SaleResource;
-use App\Models\Product;
-use App\Models\Sale;
+use App\Services\ImportExcelService;
 
 class ImportSales extends Page
 {
@@ -31,6 +27,17 @@ class ImportSales extends Page
     public function form(Forms\Form $form): Forms\Form
     {
         return $form->schema([
+            Forms\Components\Select::make('type')
+                ->label('Status Transaksi')
+                ->statePath('data.type')
+                ->required()
+                ->options([
+                    'sales' => 'Sales',
+                    'return' => 'Return',
+                    'sku' => 'SKU',
+                    // Tambah lainnya jika ada
+                ]),
+
             Forms\Components\Select::make('marketplace')
                 ->label('Marketplace')
                 ->statePath('data.marketplace')
@@ -41,15 +48,7 @@ class ImportSales extends Page
                     'tiktok' => 'TikTok',
                     // Tambah lainnya sesuai kebutuhan
                 ]),
-            Forms\Components\Select::make('type')
-                ->label('Status Transaksi')
-                ->statePath('data.type')
-                ->required()
-                ->options([
-                    'sales' => 'Sales',
-                    'return' => 'Return',
-                    // Tambah lainnya jika ada
-                ]),
+
             Forms\Components\FileUpload::make('file')
                 ->label('Excel File')
                 ->statePath('data.file')
@@ -61,78 +60,36 @@ class ImportSales extends Page
 
     public function submit()
     {
+        // Validasi
         $this->validate([
             'data.marketplace' => 'required',
             'data.type' => 'required',
             'data.file' => 'required',
         ]);
-
-        $path = $this->data['file']; // file path dari FileUpload
+        // Proses import data dari file excel
         foreach ($this->data['file'] as $file) {
-            $data = Excel::toArray([], $file);
-            $rows = $data[0];
-
-            $header = array_map('trim', $rows[0]);
-
-            $indexSku = array_search('Nomor Referensi SKU', $header);
-            $indexQty = array_search('Jumlah', $header);
-            $indexPrice = array_search('Harga Setelah Diskon', $header);
-            $indexOrderNum = array_search('No. Pesanan', $header);
-            $indexSoldAt = array_search('Waktu Pesanan Dibuat', $header);
-            $indexBuyer = array_search('Username (Pembeli)', $header);
-
-            foreach (array_slice($rows, 1) as $row) {
-                $sku = $row[$indexSku];
-                $qty = (int) $row[$indexQty];
-                $price = (float) str_replace('.', '', $row[$indexPrice]);
-                $orderNumber = $row[$indexOrderNum];
-                $soldAt = $row[$indexSoldAt];
-                $buyer = $row[$indexBuyer] ?? null;
-
-                $product = Product::where('sku', $sku)->first();
-                if (!$product) {
-                    // Bisa collect error/warning untuk tampilkan ke user
-                    continue;
-                }
-
-                $sale = Sale::create([
-                    'product_id' => $product->id,
-                    'sku' => $sku,
-                    'marketplace' => $this->data['marketplace'],
-                    'order_number' => $orderNumber,
-                    'qty' => $qty,
-                    'price' => $price,
-                    'buyer_username' => $buyer,
-                    'sold_at' => $soldAt,
-                    'raw_data' => json_encode($row),
-                ]);
-
-                $product->decrement('stock', $qty);
-
-                StockMovement::create([
-                    'product_id' => $product->id,
-                    'sku' => $sku,
-                    'type' => 'out',
-                    'source_type' => 'sales',
-                    'source_id' => $sale->id,
-                    'qty' => -$qty,
-                    'note' => 'Import sales ' . $this->data['marketplace'] . ' #' . $orderNumber,
-                    'meta' => [
-                        'buyer' => $buyer,
-                        'price' => $price,
-                        'imported_by' => auth()->user()->name ?? null,
-                    ],
-                    'moved_at' => $soldAt ?? now(),
-                ]);
-            }
+            $importer = new ImportExcelService();
+            $result = $importer->importSalesOrReturn(
+                $file,
+                $this->data['marketplace'],
+                $this->data['type'],
+                auth()->user()->name ?? null,
+            );
             break;
         }
 
-        // Proses parsing dan preview/import Excel
-        // ...
-        Notification::make()
-            ->title('File uploaded!')
-            ->success()
-            ->send();
+        if ($result['failed'] > 0) {
+            Notification::make()
+                ->title('Import gagal!')
+                ->body('Berhasil: ' . $result['success'] . ', Gagal: ' . $result['failed'] . ', Error: ' . implode(', ', $result['errors']))
+                ->danger()
+                ->send();
+        } else {
+            Notification::make()
+                ->title('Import selesai!')
+                ->body('Total: ' . $result['success'])
+                ->success()
+                ->send();
+        }
     }
 }

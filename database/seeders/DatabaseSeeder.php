@@ -24,11 +24,10 @@ class DatabaseSeeder extends Seeder
         ]);
 
         Product::create([
-            'sku' => 'EYB-LA-724',
-            'name' => 'Eyebrow Lameila 724 / Mascara Ungu',
+            'sku' => 'SALP-SWISS-PARIS',
+            'name' => 'SALEP SWISS PARIS LOTION PENGHILANG KUTIL',
             'stock' => 0,
-            'price' => 6000,
-            'description' => 'Mascara Ungu Merk Lameila SVMY UNGU',
+            'description' => 'SALEP SWISS PARIS LOTION PENGHILANG KUTIL',
         ]);
 
         Supplier::create([
