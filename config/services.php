@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'shopee' => [
+        'partner_id' => 1257477,
+        'partner_key' => '4d6744534e57626b5359784e48557a68536149584151664c6e445662466a6d43',
+        'redirect_url' => 'https://shopee.quee.site',
+    ]
+
 ];
